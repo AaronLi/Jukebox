@@ -1,5 +1,4 @@
 import asyncio
-import collections
 import io
 import time
 import wave
@@ -9,9 +8,9 @@ from shazamio import Shazam, Serialize
 import pyaudio
 import threading
 
-from shazamio.schemas.models import SongSection
+from card_animator import create_music_card, CardAnimator
 
-SAMPLE_RATE = 16000
+SAMPLE_RATE = 44100
 SOUND_BUFFER_S = 12
 READ_PER_CALL = SAMPLE_RATE//2
 IDENTIFY_PAUSE = 2.5
@@ -24,6 +23,7 @@ def audio_recording_thread():
     p = pyaudio.PyAudio()
 
     input_device = p.get_default_input_device_info()
+    print("Recording with", input_device)
     input_stream = p.open(SAMPLE_RATE, 1, pyaudio.paInt16, input=True, input_device_index=input_device['index'])
 
     input_stream.start_stream()
@@ -34,38 +34,37 @@ def audio_recording_thread():
 def visualizer_thread():
     global running
     import pygame
-    import requests
 
     icon_cache = {}
 
     screen = pygame.display.set_mode((1280, 720))
 
     pygame.font.init()
-    draw_font = pygame.font.Font('SourGummy-VariableFont_wdth,wght.ttf', size=40)
+    draw_font = pygame.font.Font('PlayfairDisplay-VariableFont_wght.ttf', size=40)
+    draw_font_small = pygame.font.Font('PlayfairDisplay-VariableFont_wght.ttf', size=25)
     clockity = pygame.time.Clock()
-    old_track = None
+    animator = CardAnimator(draw_font, draw_font_small, icon_cache)
+    old_to_show = None
     while running:
         for e in pygame.event.get():
             if e.type == pygame.QUIT:
                 running = False
         screen.fill((0, 0, 0))
 
-        if now_playing and time.time() - now_playing[-1][0] < 6:
-            track_info = now_playing[-1][1]
-            if old_track != track_info:
-                print(track_info)
-                for section in track_info.sections:
-                    if isinstance(section, SongSection):
-                        for page in section.meta_pages:
-                            if page.caption == track_info.title:
-                                print(page.image)
-                                icon_cache[track_info.title] = pygame.image.load(io.BytesIO(requests.get(page.image).content), page.image).convert()
-            old_track = now_playing[-1]
-            render_font = draw_font.render(str(track_info), False, (255, 255, 255))
-            screen.blit(render_font, (10, 10))
+        to_show = now_playing[-1] if now_playing else None
 
-            if icon_cache[track_info.title]:
-                screen.blit(icon_cache[track_info.title], (10, 720 - icon_cache[track_info.title].get_height() - 10))
+        if to_show is not None:
+
+            # song is undetected for less than 10s, just show previous for now
+            if to_show[1] is None:
+                if time.time() - to_show[0] <= 10 and len(now_playing) > 1:
+                    to_show = now_playing[-2]
+
+            if to_show != old_to_show:
+                animator.set_detection_to_show(to_show)
+        old_to_show = to_show
+        animator.draw(screen)
+
         pygame.display.flip()
         clockity.tick(60)
 
@@ -82,6 +81,7 @@ async def main():
     while running:
         try:
             if len(audio_queue) == audio_queue.maxlen:
+                record_timestamp = time.time()
                 wav_out = io.BytesIO()
                 wave_file = wave.open(wav_out, 'wb')
                 wave_file.setnchannels(1)
@@ -89,10 +89,23 @@ async def main():
                 wave_file.setsampwidth(2)
                 wave_file.writeframes(bytes(audio_queue))
                 wave_file.close()
-                recognized_song = await shazam.recognize(data=wav_out.getvalue())
+                try:
+                    recognized_song = await shazam.recognize(data=wav_out.getvalue())
+                except Exception as e:
+                    print("Error calling shazam:", e)
+                    await asyncio.sleep(10)
+                    continue
                 recognize_result = Serialize.full_track(data=recognized_song)
                 if recognize_result.track:
-                    now_playing.append((time.time(), recognize_result.track, recognize_result.timestamp))
+                    print(recognize_result)
+                    if len(now_playing) == 0 or now_playing[-1][1] is None or recognize_result.track.key != now_playing[-1][1].track.key:
+                        if len(now_playing) >= 2 and now_playing[-2][1] is not None and now_playing[-2][1].track.key == recognize_result.track.key:
+                            now_playing.pop()
+                        else:
+                            now_playing.append((record_timestamp, recognize_result))
+                else:
+                    print('not recognized')
+                    now_playing.append((record_timestamp, None))
 
                 sleep_time = 5
                 if recognize_result.retry_ms:
