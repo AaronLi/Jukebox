@@ -8,9 +8,9 @@ from shazamio import Shazam, Serialize
 import pyaudio
 import threading
 
-from card_animator import create_music_card, CardAnimator
+from card_animator import CardAnimator
 
-SAMPLE_RATE = 44100
+SAMPLE_RATE = 16000
 SOUND_BUFFER_S = 12
 READ_PER_CALL = SAMPLE_RATE//2
 IDENTIFY_PAUSE = 2.5
@@ -55,9 +55,9 @@ def visualizer_thread():
 
         if to_show is not None:
 
-            # song is undetected for less than 10s, just show previous for now
+            # song is undetected for less than 15s, just show previous for now
             if to_show[1] is None:
-                if time.time() - to_show[0] <= 10 and len(now_playing) > 1:
+                if time.time() - to_show[0] <= 15 and len(now_playing) > 1:
                     to_show = now_playing[-2]
 
             if to_show != old_to_show:

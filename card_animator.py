@@ -11,7 +11,7 @@ TRACK_SCROLL_PPS = 50.0
 ARTIST_SCROLL_PPS = 30.0
 
 class CardAnimator:
-    def __init__(self, draw_font: pygame.font.Font, draw_font_small: pygame.font.Font, icon_cache: Dict[str, Surface], transition_out_time = 0.5, transition_delay_time = 0.2, transition_in_time = 0.5):
+    def __init__(self, draw_font: pygame.font.Font, draw_font_small: pygame.font.Font, icon_cache: Dict[str, Surface], transition_out_time = 0.5, transition_delay_time = 0.2, transition_in_time = 1.0):
         self.draw_font_small = draw_font_small
         self.draw_font = draw_font
         self.icon_cache = icon_cache
@@ -39,17 +39,17 @@ class CardAnimator:
     def draw(self, surface: pygame.Surface):
         current_track_position = (surface.get_width()//2, surface.get_height()//2)
         animation_progress_s = self.__current_animation_time()
-        current_card = create_music_card(self.current_value, self.icon_cache, self.draw_font, self.draw_font_small, time.time() - self.current_value[0]) if self.current_value[1] is not None else None
-        old_card = create_music_card(self.last_detection, self.icon_cache, self.draw_font, self.draw_font_small, time.time() - self.last_detection[0]) if self.last_detection[1] is not None else None
-        if animation_progress_s > self.__total_animation_duration():
+        if animation_progress_s >= self.__total_animation_duration():
             if self.current_value[1] is not None:
                 #finished
                 card = create_music_card(self.current_value, self.icon_cache, self.draw_font, self.draw_font_small, time.time() - self.transition_start_time - self.transition_in_time - self.transition_out_time - self.transition_delay_time)
                 draw_pos = (current_track_position[0] - card.get_width()//2, current_track_position[1] - card.get_height()//2)
                 surface.blit(card, draw_pos)
-        elif animation_progress_s > self.__transition_out_and_delay_duration():
+        elif animation_progress_s >= self.__transition_out_and_delay_duration():
             # transition in
             step_progress = (animation_progress_s - self.__transition_out_and_delay_duration()) / self.transition_in_time
+            step_progress = 1 - (1 - step_progress) ** 3
+            current_card = create_music_card(self.current_value, self.icon_cache, self.draw_font, self.draw_font_small,0) if self.current_value[1] is not None else None
             if current_card is None:
                 return
             initial_position = surface.get_height() + current_card.get_height()
@@ -57,12 +57,15 @@ class CardAnimator:
             new_card_pos = (current_track_position[0] - current_card.get_width()//2, initial_position * (1-step_progress) + final_position * step_progress)
 
             surface.blit(current_card, new_card_pos)
-        elif animation_progress_s > self.transition_out_time:
+        elif animation_progress_s >= self.transition_out_time:
             # delay
             step_progress = (animation_progress_s - self.transition_out_time) / self.transition_delay_time
         else:
             # transition out
             step_progress = animation_progress_s / self.transition_out_time
+            step_progress = step_progress ** 2
+            old_card = create_music_card(self.last_detection, self.icon_cache, self.draw_font, self.draw_font_small,
+                                         time.time() - self.last_detection[0]) if self.last_detection[1] is not None else None
             if old_card is None:
                 return
             initial_position = current_track_position[1] - old_card.get_height()//2
@@ -129,7 +132,7 @@ def create_music_card(detection_info: Tuple[float, ResponseTrack], icon_cache: D
         if first_text_pos + text_and_buffer_width < card.get_width():
             card.blit(artist_text, (first_text_pos + text_and_buffer_width, SECOND_LINE_HEIGHT))
 
-    progress_s = current_track.matches[0].offset + time.time() - detection_timestamp
+    progress_s = max(0, current_track.matches[0].offset + time.time() - detection_timestamp)
     minutes = int(progress_s // 60)
     seconds = int(progress_s % 60)
 
